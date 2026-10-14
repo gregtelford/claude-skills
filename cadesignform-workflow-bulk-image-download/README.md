@@ -1,10 +1,14 @@
-# cadesignform-workflow-bulk-image-download
+# Bulk Image Downloading Tool
 
-A Claude skill that reliably bulk-downloads every image in a scene from [cadesignform.dk Workflow](https://workflow.cadesignform.dk/), the review tool we use at Keilhauer for material and textile scan review.
+## What it is
+
+A Claude skill that reliably bulk-downloads every image in a scene from our 3rd party 3D rendering partner's proprietary staging website [cadesignform.dk Workflow](https://workflow.cadesignform.dk/). The site is used during review rounds to view, download, and comment on feedback to produced outputs. 
 
 ## The problem
 
-Workflow is an older ASP.NET WebForms app, and a few of its quirks make naive automation fail in ways that are easy to miss at first:
+As a brand we are often reviewing several draft outputs at a time, sometimes eclipsing 100 outputs. So downloading and reviewing images can become time consuming and has been identified as a bottleneck and an inefficient use of time. 
+
+Bulk downloads have been considered as an options, however the website is built from an older ASP.NET WebForms app, and a few of its quirks make naive automation fail in ways that are easy to miss at first:
 
 - Image IDs aren't assigned in scene order, so you can't just increment an ID to get "the next image."
 - It's a full-page-reload app, so clicking too early lands on the *old* page's still-live Download button — producing duplicates and silent skips.
@@ -16,5 +20,9 @@ Workflow is an older ASP.NET WebForms app, and a few of its quirks make naive au
 This skill documents the full process: scraping the scene's true image ID list up front, polling for a confirmed page load before acting (instead of a fixed wait), using a real click for the Download button, and — critically — always finishing with a file-count verification and a targeted retry pass for anything missing.
 
 It grew out of several rounds of debugging real download runs (33 of 38, then 41 of 48, then 44 of 48, before landing on a fully reliable process), so the fixes in here are specific, field-tested answers to specific failure modes rather than general best practices.
+
+## Results
+
+Running the skill allows users from our marketing team to bulk download to specified locations, and do so with an agentic-first approach that allows the process to be carried out in the background while working on other tasks. Time savings are estimated to be 4-6 hours per project (all downloads, multiple rounds of revisions, generalized quantity). 
 
 See [SKILL.md](./SKILL.md) for the full procedure.

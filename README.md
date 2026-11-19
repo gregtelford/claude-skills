@@ -8,6 +8,6 @@ Each skill lives in its own folder with a `SKILL.md` describing the procedure an
 
 | Skill | What it does |
 | --- | --- |
-| [cadesignform-workflow-bulk-image-download](./cadesignform-workflow-bulk-image-download) | Reliably bulk-downloads every image in a scene from the cadesignform.dk Workflow textile/material scan review tool, without duplicates or silent misses. |
+| [cadesignform-workflow-bulk-image-download](./cadesignform-workflow-bulk-image-download) | Reliably bulk-downloads every image in a scene (or a whole project) from the cadesignform.dk Workflow review tool, without duplicates or silent misses. |
 
 More to come as I keep building these out.

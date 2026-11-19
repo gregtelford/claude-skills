@@ -2,15 +2,18 @@
 
 ## What it is
 
-A Claude skill that reliably bulk-downloads every image in a scene from our 3rd party 3D rendering partner's proprietary staging website [cadesignform.dk Workflow](https://workflow.cadesignform.dk/). The site is used during review rounds to view, download, and comment on feedback to produced outputs. 
+A Claude skill that reliably bulk-downloads every image in a scene, or a whole project, from [cadesignform.dk Workflow](https://workflow.cadesignform.dk/), the proprietary review site our 3rd party 3D rendering partner uses to share renders and material scans for feedback.
+
+**Why it exists:** Workflow has limited options for bulk downloading. Individual scenes can't be downloaded in one go, so each image has to be opened and downloaded one at a time, which takes a long time when a review round contains dozens of images. This skill hands that job to Claude. Open a scene in Chrome and ask Claude to run the skill. It collects every image in the scene, downloads each one exactly once, and finishes with a file-count check so nothing is missed or duplicated. The work runs reliably in the background, so you can get on with other tasks in the meantime.
 
 ## The problem
 
 As a brand we are often reviewing several draft outputs at a time, sometimes eclipsing 100 outputs. So downloading and reviewing images can become time consuming and has been identified as a bottleneck and an inefficient use of time. 
 
-Bulk downloads have been considered as an options, however the website is built from an older ASP.NET WebForms app, and a few of its quirks make naive automation fail in ways that are easy to miss at first:
+Bulk downloads have been considered as an option, however the website is built from an older ASP.NET WebForms app, and a few of its quirks make naive automation fail in ways that are easy to miss at first:
 
 - Image IDs aren't assigned in scene order, so you can't just increment an ID to get "the next image."
+- The Download button opens the file in a hidden background tab and gives no feedback on the page, so an automated agent assumes the click failed and clicks again, which creates duplicates.
 - It's a full-page-reload app, so clicking too early lands on the *old* page's still-live Download button — producing duplicates and silent skips.
 - Larger files (30MB+) fail to download when the click is scripted rather than a real, trusted click, with no error shown.
 - Even doing everything right, an occasional download can still land missing roughly 1 in 20–25 times, with no signal from the page that it happened.
@@ -32,6 +35,6 @@ It grew out of several rounds of debugging real download runs (33 of 38, then 41
 
 ## Results
 
-Running the skill allows users from our marketing team to bulk download to specified locations, and do so with an agentic-first approach that allows the process to be carried out in the background while working on other tasks. Time savings are estimated to be 4-6 hours per project (all downloads, multiple rounds of revisions, generalized quantity). 
+Running the skill allows users from our marketing team to bulk download complete scenes to their browser's Downloads folder, and do so with an agentic-first approach that allows the process to be carried out in the background while working on other tasks. Time savings are estimated to be 4-6 hours per project (all downloads, multiple rounds of revisions, generalized quantity). 
 
 See [SKILL.md](./SKILL.md) for the full procedure.

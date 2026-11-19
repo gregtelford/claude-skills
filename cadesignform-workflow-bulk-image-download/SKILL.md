@@ -1,88 +1,112 @@
 ---
 name: cadesignform-workflow-bulk-image-download
-description: Use when downloading all images from a scene on the cadesignform.dk Workflow review tool (e.g. Keilhauer textile/material scan review), so every image is captured without duplicates or silent misses.
+description: Use when downloading all images from a scene (or a whole project) on the cadesignform.dk Workflow review tool, so every image is captured once, without duplicates or silent misses.
 ---
 
 # Bulk image download from cadesignform.dk Workflow
 
-The Workflow tool (`workflow.cadesignform.dk`) is a classic ASP.NET WebForms app. Each scene (`Scene.aspx?id=<sceneId>`) is a lazy-loaded grid of thumbnails linking to `Comment.aspx?id=<imageId>`, which shows a Download button, a "View 1:1" link, a Timeline link, and an "Image N of M in scene" counter. This skill encodes three hard-won fixes; skipping any one of them reintroduces missed or duplicate downloads.
+The Workflow tool (`workflow.cadesignform.dk`) is a classic ASP.NET WebForms app used for review rounds on renders and material scans. A project (`Project.aspx?id=<projectId>`) contains scenes (`Scene.aspx?id=<sceneId>`). Each scene is a grid of thumbnails, and each thumbnail links to an image viewer page, `Comment.aspx?id=<imageId>`.
 
-## Why the naive approach fails
+This skill runs through Claude in Chrome, inside the user's signed-in browser session.
 
-1. **Image IDs are NOT sequential by scene position.** `id+1` is the next image uploaded, not the next image in the scene. Never increment ids or rely on "Image N of M" for ordering.
-2. **This is a full-page-reload app.** After navigating to a new `Comment.aspx?id=`, the browser keeps rendering the OLD page until the new one finishes loading (the crossfade just looks like a transition). Clicking Download too early hits the old page's still-live button — causing the OLD image to download again (duplicate) while the intended one is skipped.
-3. **Large files silently fail when the Download click is scripted.** The button does `window.open('/Services/DownloadImage.ashx?id=<id>', '_blank')`. A JS `element.click()` (untrusted/synthetic gesture) reliably fails to actually save files in the 30–41MB range, even though it works fine for smaller files (~11MB). A real, trusted click (via a browser automation tool's native click action) is required for large files to download reliably. Network-request logging does NOT capture these new-tab download navigations — don't rely on it to verify.
-4. **Even with every fix applied, an occasional download (roughly 1 in 20–25) can still land missing** with no error signal from the page. Treat this as expected, not a sign the method is broken — the fix is a mandatory final verification + targeted retry pass, not a perfect first pass.
+**Default: download every image, approved or not.** Unapproved images come out watermarked, which is expected. Filter to approved only when the user asks.
 
-## Procedure
+## How the site works, and why the obvious approach fails
 
-### 1. Scrape the authoritative image ID list (never trust visual scroll-counting)
+1. **The viewer's Download button gives no visible feedback.** It calls `window.open('/Services/DownloadImage.ashx?id=<imageId>', '_blank')`, which opens a background tab the agent can't see, and the viewer page doesn't change. An agent that clicks it sees nothing happen, assumes the click failed, and clicks again. Every extra click is another copy of the same file. This was the main source of duplicates.
+2. **It's a full-page-reload app.** If you click "next" and then Download before the new page finishes loading, you hit the old page's still-live button. The previous image downloads again and the intended one gets skipped.
+3. **Image IDs aren't sequential by scene position.** `id+1` is the next image uploaded, not the next image in the scene. Never increment IDs and never count "next" arrow clicks.
+4. **Files are large and slow.** Full-size images run about 30–46 MB, and the server can take several seconds or more to start sending one.
+5. **Results with the Download button have been inconsistent.** A native click worked in earlier runs but saved nothing in a later test. Requesting the download URL directly, once per image, worked reliably. The procedure below never touches the button.
+6. **Scene pages have no ZIP option.** The "Full-size images (ZIP)" button is only on the project page, and it bundles every scene in the project.
+7. **Silent misses can still happen.** No method has been perfect on the first pass, so a final count check and a targeted retry are mandatory.
 
-On the scene grid page, run:
+## Procedure: one scene
 
-```js
-async function collectImageIds() {
-  let ids = new Set();
-  for (let i = 0; i < 40; i++) {
-    document.querySelectorAll('a[href*="Comment.aspx?id="]').forEach(a => {
-      const m = a.getAttribute('href').match(/id=(\d+)/);
-      if (m) ids.add(m[1]);
-    });
-    window.scrollBy(0, 800);
-    await new Promise(r => setTimeout(r, 200));
-  }
-  document.querySelectorAll('a[href*="Comment.aspx?id="]').forEach(a => {
-    const m = a.getAttribute('href').match(/id=(\d+)/);
-    if (m) ids.add(m[1]);
-  });
-  return {count: ids.size, ids: Array.from(ids).sort((a,b)=>a-b)};
-}
-await collectImageIds();
-```
+### 1. Get the authoritative image list
 
-Confirm `count` matches the page's "Filter View (N)" badge before proceeding. This sorted id list is the complete, ground-truth work queue — iterate it directly by navigating to `Comment.aspx?id=<id>` for each one. Do NOT use the in-page "›" next-arrow (click-counting drifts and silently skips/duplicates).
+Open the scene page (`Scene.aspx?id=<sceneId>`) in its own tab and leave it there. Leaving the page stops the download script.
 
-### 2. For each id: navigate → poll for real load → real click → wait
+Fetch the scene's HTML instead of reading the live grid. The live grid lazy-loads as you scroll, but the fetched HTML lists every image. Each image is linked more than once, so dedupe:
 
 ```js
-async function waitForLoad(id, timeoutMs) {
-  const start = Date.now();
-  let lastHref = null;
-  while (Date.now() - start < timeoutMs) {
-    const tl = document.getElementById('ContentPlaceHolder1_hlImageTimeline');
-    lastHref = tl ? tl.getAttribute('href') : null;
-    if (lastHref && lastHref.includes('id=' + id)) return {status: 'loaded', waitedMs: Date.now() - start};
-    await new Promise(r => setTimeout(r, 250));
-  }
-  return {status: 'timeout', waitedMs: Date.now() - start, lastHref};
-}
-await waitForLoad('<id>', 10000);
+const sceneId = new URLSearchParams(location.search).get('id');
+const html = await fetch('/Scene.aspx?id=' + sceneId).then(r => r.text());
+const doc = new DOMParser().parseFromString(html, 'text/html');
+const seen = new Set(), items = [];
+doc.querySelectorAll('a[href*="Comment.aspx"]').forEach(a => {
+  const id = (a.getAttribute('href').match(/id=(\d+)/) || [])[1];
+  const name = a.textContent.trim().replace(/\s+/g, ' ').replace(/^.*?\d+ x \d+ px\s*/, '');
+  if (!id) return;
+  if (!seen.has(id)) { seen.add(id); items.push({ id, name }); }
+  else { const it = items.find(x => x.id === id); if (it && !it.name && name) it.name = name; }
+});
+window.__cadItems = items;
+({ scene: doc.title, count: items.length, names: items.map(i => i.name) })
 ```
 
-Then:
-- Click the Download button using a real, trusted click (not a scripted `.click()`) at its verified screen coordinate. Scripted clicks silently fail to download large files.
-- Wait a full, undisturbed ~10 seconds before navigating to the next id. Don't shorten this to speed things up — it's necessary for large files to finish writing to disk before the tab/context changes.
+Confirm `count` matches the "N images" figure the site shows for that scene before going on.
 
-Note: the load-check occasionally times out (`status: 'timeout'`, `lastHref: null`) even though the page's `<title>` already shows the correct image — this just means the Timeline link populates slightly slower than the rest of the page. Proceed with the click in that case; it's still landing on the correct, fully-loaded page. This has not correlated with missed downloads in testing.
+Tip: Claude in Chrome's tool output blocks text containing URLs with query strings. Have scripts return IDs, counts and names, never full URLs.
 
-These steps can be safely batched (e.g. 3 images per batch: navigate → poll → click → wait, repeated) — batching does not reintroduce the duplicate/miss problems as long as each image still gets its own poll, real click, and full wait before the next navigation.
+### 2. Request each image exactly once
 
-### 3. Mandatory final verification (do not skip, even after a clean-looking run)
+Each image is requested once through a hidden iframe pointed at the download endpoint, 12 seconds apart. The loop runs in the background, so the tool call returns right away:
 
-After processing every id, confirm the destination folder's file count matches the scraped id count. Do not assume success from "no errors observed" — silent misses in the ~4–5% range can occur even with every fix applied correctly.
+```js
+window.__cad = { total: window.__cadItems.length, done: [], state: 'running' };
+(async () => {
+  for (const it of window.__cadItems) {
+    if (window.__cad.stop) break;
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = '/Services/DownloadImage.ashx?id=' + it.id;
+    document.body.appendChild(f);
+    window.__cad.done.push(it.id);
+    await new Promise(r => setTimeout(r, 12000));
+  }
+  window.__cad.state = 'finished';
+})();
+'started ' + window.__cadItems.length
+```
 
-If any are missing:
-- Identify which images by name (filenames like "Fern map", "Red model") — map these back to ids via the titles captured during the run (page `<title>` at each step records the material/colorway name).
-- Re-download only those specific ids, one at a time (not batched), with the same navigate → poll → real click → 10s wait sequence.
-- If a file is reported as duplicated rather than missing, no action is needed beyond noting it — duplicates are harmless, just delete the extra copy.
-- Re-confirm the count after the retry pass. Repeat the targeted-retry step if still short.
+Never run this twice for the same scene. That would duplicate every file.
+
+If Chrome asks whether the site may "download multiple files", the user needs to click **Allow**. They only have to do this once.
+
+### 3. Monitor
+
+Poll `({state: window.__cad.state, done: window.__cad.done.length, total: window.__cad.total})` every 30 seconds or so. Expect about 12 seconds per image, so a 38-image scene takes about 8 minutes. After `state` reads `finished`, wait about 30 more seconds for the last file to arrive.
+
+### 4. Verify, then do a targeted retry (don't skip this)
+
+Files land in Chrome's Downloads folder, which the agent can't see. Ask the user to compare the file count against `count` from step 1.
+
+- **Missing files:** match them by name against `__cadItems`, then request only those IDs with the same iframe method. Never re-run the whole scene.
+- **Duplicates:** these are harmless. The user can delete the extra copies.
+
+Confirm the count again after the retry.
+
+## Procedure: whole project
+
+On the project page, use **"Full-size images (ZIP)"** in the Download Images panel. Uncheck "Include only approved images" to get everything, unless the user asked for approved only. Click it once and don't click it again, because a large project's ZIP can take a while to start.
+
+## Approved images only
+
+This hasn't been field-tested for scenes yet. Approved tiles show a green check marker. Filter `__cadItems` to approved tiles, then confirm the count with the user before starting.
+
+## Guardrails
+
+- This is a client review tool. Never click Approve, Reject, comment, status, or any other review control.
+- Never click an image's Download button, and never request the same image ID twice in one pass.
+- Avoid anything that raises a browser alert or confirm dialog. If one appears, stop and tell the user.
+- If a step fails twice, stop and report instead of looping.
 
 ## Quick checklist
 
-- [ ] Scrape full id set from the scene grid; confirm count matches "Filter View (N)"
-- [ ] Iterate scraped ids directly by URL — never the next-arrow, never id+1
-- [ ] Poll `ContentPlaceHolder1_hlImageTimeline` href for the target id before acting (don't use a fixed wait for page-load)
-- [ ] Click Download with a real click, not a scripted `.click()`
-- [ ] Wait ~10s undisturbed after each click before navigating away
-- [ ] After the full pass, verify final file count against the scraped id count
-- [ ] Retry any missing ones individually (not batched); confirm again
+- [ ] Open the scene in its own tab and leave it there
+- [ ] Fetch the scene HTML, dedupe the IDs, and check the count against the site's image count
+- [ ] Start the iframe queue once (12-second gaps) and never re-run it
+- [ ] Poll until it's finished, then wait about 30 more seconds
+- [ ] Have the user verify the file count
+- [ ] Retry only the missing IDs, then re-verify

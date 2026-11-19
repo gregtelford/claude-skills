@@ -17,9 +17,18 @@ Bulk downloads have been considered as an options, however the website is built 
 
 ## The fix
 
-This skill documents the full process: scraping the scene's true image ID list up front, polling for a confirmed page load before acting (instead of a fixed wait), using a real click for the Download button, and — critically — always finishing with a file-count verification and a targeted retry pass for anything missing.
+This skill documents the full process:
 
-It grew out of several rounds of debugging real download runs (33 of 38, then 41 of 48, then 44 of 48, before landing on a fully reliable process), so the fixes in here are specific, field-tested answers to specific failure modes rather than general best practices.
+- Pull the scene's true image ID list up front from the scene page's HTML.
+- Skip the Download button entirely and request each image's download link exactly once, spaced out to allow for the site's delay.
+- Always finish with a file-count check and a targeted retry for anything missing.
+
+It grew out of several rounds of debugging real download runs (33 of 38, then 41 of 48, then 44 of 48), so the fixes in here are specific, field-tested answers to specific failure modes rather than general best practices.
+
+## Version history
+
+- **v2 (Nov 2026):** We found the main cause of duplicate downloads. The Download button opens the file in a hidden background tab and gives no feedback on the page, so the agent kept clicking it again, and the site's delay on large files made that worse. v2 skips the button: it requests each image once by ID through a background queue with a 12-second gap, and gets the full image list from the scene page's HTML, so lazy loading can't hide any images.
+- **v1:** Navigated to each image's page, polled until the page had finished loading, then clicked the Download button and waited 10 seconds before moving on.
 
 ## Results
 
